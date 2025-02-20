@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Stream</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <h1>Live Video Stream</h1>
+    <video controls autoplay>
+        <source src="http://<EC2_PUBLIC_IP>:5000/stream" type="video/mp4">
+        Your browser does not support the video tag.
+    </video>
+</body>
+</html>
+#New one
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Stream</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <h1>Live Video Stream</h1>
+    <img src="/stream">  <!-- Changed from <video> to <img> for MJPEG streaming -->
+</body>
+</html>
