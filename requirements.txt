@@ -1,0 +1,6 @@
+flask
+cryptography
+numpy
+opencv-python
+# remove zlib; it's built into Python
+ultralytics

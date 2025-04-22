@@ -1,61 +1,89 @@
 import cv2
-from config import SERVER_IP, SERVER_PORT, CHUNK_SIZE, ENCRYPTION_KEY
+import argparse
+from config import SERVER_IP, SERVER_PORT, CHUNK_SIZE
 from camera import initialize_camera
-from compression import compress_frame, decompress_frame
-from encryption import encrypt_data, decrypt_data
-from fragmentation import fragment_data, reassemble_data
+from compression import compress_frame
+from Encrypt.protocol_C.secure import perform_key_exchange, aes_encrypt
 from utils.network import initialize_socket, send_data_in_chunks
+from forks import ForkManager
 
 
 def main():
-    try:
-        # Initialize camera and socket
-        cap = initialize_camera()
-        client_socket = initialize_socket(SERVER_IP, SERVER_PORT)
+    parser = argparse.ArgumentParser(description='Drone Video Stream Client')
+    # Authentication and broker
+    parser.add_argument('--stream-id', required=True, help='Stream number')
+    parser.add_argument('--password', required=True, help='Stream password')
+    parser.add_argument('--broker', action='store_true', help='Enable sending to broker server')
+    # Broker connection
+    parser.add_argument('--server-ip', default=SERVER_IP)
+    parser.add_argument('--server-port', type=int, default=SERVER_PORT)
+    parser.add_argument('--chunk-size', type=int, default=CHUNK_SIZE)
+    # Fork options
+    parser.add_argument('--store', action='store_true', help='Enable onboard storage')
+    parser.add_argument('--display', action='store_true', help='Enable local display')
+    parser.add_argument('--analyze', action='store_true', help='Enable onboard analysis')
+    parser.add_argument('--relay-host', help='Direct SRT relay host')
+    parser.add_argument('--relay-port', type=int, help='Direct SRT relay port')
+    parser.add_argument('--peer', action='append', help='Direct SRT peer URIs')
+    args = parser.parse_args()
 
+    # Initialize camera with retry in case of open failures
+    cap = None
+    while True:
+        try:
+            cap = initialize_camera()
+            print("Camera opened successfully.")
+            break
+        except Exception as e:
+            print("Camera open error:", e)
+            print("Retrying camera open in 5 seconds...")
+            cv2.waitKey(5000)
+
+    # Initialize broker socket if needed
+    client_socket = None
+    if args.broker:
+        client_socket = initialize_socket(args.server_ip, args.server_port)
+        # Authenticate
+        creds = f"{args.stream_id}:{args.password}\n".encode()
+        client_socket.sendall(creds)
+        resp = client_socket.recv(2)
+        if resp != b'OK':
+            raise RuntimeError('Authentication failed')
+        # Key exchange
+        shared_key = perform_key_exchange(client_socket, is_client=True)
+
+    # Instantiate forks
+    forks = ForkManager(
+        store=args.store,
+        display=args.display,
+        analyze=args.analyze,
+        relay=bool(args.relay_host and args.relay_port),
+        relay_host=args.relay_host,
+        relay_port=args.relay_port,
+        peers=args.peer
+    )
+    try:
         while True:
             ret, frame = cap.read()
             if not ret:
-                print("Error: Could not read frame.")
                 break
-
-            # Resize frame
-            frame = cv2.resize(frame, (320, 240))
-
-            # Compress, encrypt, and fragment the frame
-            compressed_data = compress_frame(frame)
-            encrypted_data = encrypt_data(compressed_data, ENCRYPTION_KEY)
-            send_data_in_chunks(client_socket, encrypted_data, CHUNK_SIZE)
-
-            # Receive and process the server's response
-            response_chunks = []
-            while True:
-                chunk = client_socket.recv(CHUNK_SIZE)
-                if chunk == b"EOF":
-                    break
-                response_chunks.append(chunk)
-
-            # Reassemble, decrypt, and decompress the server's response
-            encrypted_response = reassemble_data(response_chunks)
-            decrypted_response = decrypt_data(
-                encrypted_response, ENCRYPTION_KEY)
-            processed_frame = decompress_frame(decrypted_response)
-
-            # Display the processed frame
-            if processed_frame is not None:
-                cv2.imshow("Processed Frame", processed_frame)
-
-            # Exit on 'q' key press
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
-
+            # Process forks
+            forks.process(frame)
+            # Send to broker
+            if args.broker:
+                compressed = compress_frame(frame)
+                encrypted = aes_encrypt(compressed, shared_key)
+                send_data_in_chunks(client_socket, encrypted, args.chunk_size)
     except KeyboardInterrupt:
-        print("\nExiting...")
+        pass
     finally:
+        forks.close()
         cap.release()
-        cv2.destroyAllWindows()
-        client_socket.close()
+        if args.display:
+            cv2.destroyAllWindows()
+        if args.broker and client_socket:
+            client_socket.close()
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

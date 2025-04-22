@@ -33,5 +33,8 @@ def initialize_camera():
     pipeline = gstreamer_pipeline(flip_method=0)
     cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
     if not cap.isOpened():
-        raise RuntimeError("Error: Could not open video capture.")
+        print("Warning: GStreamer camera open failed, trying default camera index 0...")
+        cap = cv2.VideoCapture(0)
+        if not cap.isOpened():
+            raise RuntimeError("Error: Could not open video capture with GStreamer or default camera.")
     return cap

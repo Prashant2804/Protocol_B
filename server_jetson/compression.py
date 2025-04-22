@@ -1,5 +1,6 @@
 import cv2
 import zlib
+import numpy as np
 
 
 def compress_frame(frame):
@@ -11,6 +12,6 @@ def compress_frame(frame):
 
 def decompress_frame(compressed_data):
     decompressed_data = zlib.decompress(compressed_data)
-    frame = cv2.imdecode(np.frombuffer(
-        decompressed_data, dtype=np.uint8), cv2.IMREAD_COLOR)
+    arr = np.frombuffer(decompressed_data, dtype=np.uint8)
+    frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     return frame
