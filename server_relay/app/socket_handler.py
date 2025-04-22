@@ -1,28 +1,21 @@
 import socket
 import struct
-from .Encrypt.protocol_C.gen import generate_key, encode_key, decode_key
-from .Encrypt.protocol_C.encrypt import xor_encrypt, shift_encrypt, shift_decrypt
-from .Encrypt.protocol_C.integrity import generate_hash, verify_hash
+import os
+import sys
+# Ensure server_relay config is on path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from config import STREAM_CREDENTIALS
+from .Encrypt.protocol_C.secure import perform_key_exchange, aes_encrypt, aes_decrypt
 from utils.compression import Compressor
 from utils.fragmentation import Fragmenter
 
 class SocketHandler:
-    def __init__(self, server_ip, server_port, buffer_size,aaa):
+    def __init__(self, server_ip, server_port, buffer_size):
         self.server_ip = server_ip
         self.server_port = server_port
         self.buffer_size = buffer_size
-        number = 12
-        byte_representation = number.to_bytes((number.bit_length() + 7) // 8, byteorder='big')
-        key = generate_key()
-        encoded_key = encode_key(key)
-        encrypted_xor = xor_encrypt(byte_representation, key)
-        encrypted_shift = shift_encrypt(encrypted_xor)
-
-        # Generate hash
-        data_hash = generate_hash(encrypted_shift)
-        print("Data Hash:", data_hash)
-
-        self.encryptor = data_hash
+        # Shared key will be established after client connects
+        self.shared_key = None
         self.server_socket = None
         self.client_socket = None
         self.client_address = None
@@ -42,6 +35,27 @@ class SocketHandler:
         """
         self.client_socket, self.client_address = self.server_socket.accept()
         print(f"Client connected from {self.client_address}")
+        # Authenticate client via stream_id and password
+        creds_line = b''
+        while b'\n' not in creds_line:
+            chunk = self.client_socket.recv(1)
+            if not chunk:
+                raise RuntimeError("Connection closed during authentication")
+            creds_line += chunk
+        try:
+            stream_id, password = creds_line.strip().decode().split(':', 1)
+        except Exception:
+            self.client_socket.send(b'ER')
+            self.client_socket.close()
+            raise RuntimeError("Invalid authentication format")
+        if STREAM_CREDENTIALS.get(stream_id) != password:
+            self.client_socket.send(b'ER')
+            self.client_socket.close()
+            raise RuntimeError("Invalid credentials")
+        # Send acknowledgement
+        self.client_socket.send(b'OK')
+        # Perform Diffie-Hellman key exchange to derive shared AES key
+        self.shared_key = perform_key_exchange(self.client_socket, is_client=False)
 
     def receive_frame(self):
         """
@@ -62,24 +76,16 @@ class SocketHandler:
             received_data += chunk
 
         # Decrypt and decompress the data
-        data = self.encryptor.decrypt_data(received_data, encryption_key)
-        return Compressor.decompress(data)
+        plaintext = aes_decrypt(received_data, self.shared_key)
+        return Compressor.decompress(plaintext)
 
     def send_frame(self, data):
         """
         Encrypt, compress, and send a frame.
         """
-        compressed_data = Compressor.compress(data)
-        key = generate_key()
-        encoded_key = encode_key(key)
-        encrypted_xor = xor_encrypt(compressed_data, key)
-        encrypted_shift = shift_encrypt(encrypted_xor)
-
-        # Generate hash
-        data_hash = generate_hash(encrypted_shift)
-        print("Data Hash:", data_hash)
-
-        encrypted_data = data_hash
+        # Compress and encrypt the data
+        compressed = Compressor.compress(data)
+        encrypted_data = aes_encrypt(compressed, self.shared_key)
         frame_size = struct.pack("!I", len(encrypted_data))
 
         # Send the frame size first

@@ -6,23 +6,33 @@ from ultralytics import YOLO
 
 class FrameProcessor:
     def __init__(self, flame_model_path, smoke_model_path):
-        # Load YOLO models
-        self.model_flame = YOLO(flame_model_path)
-        self.model_smoke = YOLO(smoke_model_path)
+        # Load YOLO models with fallback on error
+        try:
+            self.model_flame = YOLO(flame_model_path)
+        except Exception as e:
+            print(f"Warning: could not load flame model: {e}")
+            self.model_flame = None
+        try:
+            self.model_smoke = YOLO(smoke_model_path)
+        except Exception as e:
+            print(f"Warning: could not load smoke model: {e}")
+            self.model_smoke = None
 
     def detect_and_draw(self, frame):
         """
         Perform flame and smoke detection on a frame and annotate it.
         """
         # YOLO flame detection
-        results_flame = self.model_flame(frame)
-        for result in results_flame:
-            self._annotate_frame(frame, result, (0, 255, 0))  # Green for flame
+        if self.model_flame:
+            results_flame = self.model_flame(frame)
+            for result in results_flame:
+                self._annotate_frame(frame, result, (0, 255, 0))  # Green for flame
 
         # YOLO smoke detection
-        results_smoke = self.model_smoke(frame)
-        for result in results_smoke:
-            self._annotate_frame(frame, result, (255, 0, 0))  # Blue for smoke
+        if self.model_smoke:
+            results_smoke = self.model_smoke(frame)
+            for result in results_smoke:
+                self._annotate_frame(frame, result, (255, 0, 0))  # Blue for smoke
 
         return frame
 
